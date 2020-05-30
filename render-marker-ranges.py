@@ -20,14 +20,14 @@
 bl_info = {
 	"name": "Render Marker Ranges",
 	"category": "Render",
-	"version": (0, 1),
+	"version": (1, 0),
 	"blender": (2, 80, 0),
-	"location": "TBD",
+	"location": "3D View > View > Render marker ranges",
 	"description": "Tool to render segments of the timeline",
 	"warning": "",
-	"wiki_url": "TBD",
+	"wiki_url": "https://github.com/TheDuckCow/render-marker-ranges",
 	"author": "Patrick W. Crawford <support@theduckcow.com>",
-	"tracker_url":"TBD"
+	"tracker_url":"https://github.com/TheDuckCow/render-marker-ranges/issues"
 }
 
 import os
@@ -78,7 +78,7 @@ class MarkerRange(object):
 			self.id, self.start_frame, self.end_frame)
 
 	def __str__(self):
-		return "Marker range ({}) from {} to {}".format(
+		return "{} ({} - {})".format(
 			self.name, self.start_frame, self.end_frame)
 
 
@@ -114,6 +114,8 @@ def get_marker_ranges(context, end_marker_key=None):
 			MarkerRange(marker_dict[marker_frame], marker_frame, marker_frame))
 
 	# update the last marker if needed
+	if not marker_sets:
+		return []
 	if marker_sets[-1].end_frame == marker_sets[-1].start_frame:
 		marker_sets[-1].end_frame = context.scene.frame_end
 
@@ -124,7 +126,7 @@ def get_marker_ranges_enum(self, context):
 	"""Return the enum formatted list of render ranges available"""
 	return [(
 			itm.id,
-			"{}: {} to {}".format(
+			"{} ({} - {})".format(
 				itm.name, itm.start_frame, itm.end_frame),
 			"Render range {}: {} to {}".format(
 				itm.name, itm.start_frame, itm.end_frame))
@@ -144,6 +146,12 @@ def render_marker_range(context, render_style, marker_id=None):
 	init_shading_space = context.space_data.shading.type
 	init_overlay = context.space_data.overlay.show_overlays
 	init_shading_type = context.scene.display.shading.type
+
+	# force camera view
+	# bpy.ops.view3d.view_camera()
+	for area in context.screen.areas:
+		if area.type == 'VIEW_3D':
+			area.spaces[0].region_3d.view_perspective = 'CAMERA'
 
 	# Render all or one
 	if marker_id:
@@ -177,39 +185,42 @@ def render_single_marker_range(context, render_style, marker_range):
 
 	init_output = context.scene.render.filepath
 	base = os.path.basename(context.scene.render.filepath)
+	if base.endswith('_') or base.endswith('-'):
+		base = base[:-1]
 	dir_output = os.path.dirname(context.scene.render.filepath)
 
 	# setup new paths and settings
-	marker_path = marker_range.name # fix to be ok for OS filepath folder/file names
-	new_output = os.path.join(dir_output, marker_range.name, "{}_{}_".format(
-		base, marker_range.name))
+	marker_path = marker_range.id # slugify to be OS filename safe
+	new_output = os.path.join(
+		dir_output,
+		marker_path,
+		"{}_{}_".format(base, marker_path))
 	context.scene.render.filepath = new_output
 	context.scene.frame_start = marker_range.start_frame
 	context.scene.frame_end = marker_range.end_frame
-	print("Settings updated for marker range")
 
 	# set new settings
 	if render_style == "viewport_render":
-		print("Viewport render")
 		context.scene.display.shading.type = 'RENDERED'
 		context.space_data.shading.type =  'RENDERED'
 		context.space_data.overlay.show_overlays = False
 
-		# open gl animation
+		context.view_layer.update()
 		bpy.ops.render.opengl(animation=True)
+		# TODO: change to 'INVOKE_DEFAULT' with prior bpy.app.handlers.render_complete
 
 	elif render_style == "viewport_solid":
-		print("Viewport render solid")
 		context.scene.display.shading.type = 'SOLID'
 		context.space_data.shading.type =  'SOLID'
 		context.space_data.overlay.show_overlays = False
 
-		# open gl animation
+		context.view_layer.update()
 		bpy.ops.render.opengl(animation=True)
 
 	elif render_style == "full_render":
-		print("Full render")
+		context.view_layer.update()
 		bpy.ops.render.render(animation=True) # use_viewport=True?
+
 	else:
 		raise Exception("Not a value render_type")
 
@@ -287,12 +298,17 @@ class RMR_MT_marker_ranges(bpy.types.Menu):
 
 	def draw(self, context):
 		col = self.layout.column()
+		all_ranges = get_marker_ranges(context)
+		if not all_ranges:
+			col.label(text="(no markers found)")
+			return
+
 		# col.prop(context.scene, "render_marker_range_style", text=None, expand=True)
 		ops = col.operator("scene.render_all_marker_ranges")
 		# ops.render_style = context.scene.render_marker_range_style
-		col.separator()
 
-		for marker_range in get_marker_ranges(context):
+		col.separator()
+		for marker_range in all_ranges:
 			ops = col.operator(
 				"scene.render_single_marker_range",
 				text=str(marker_range))
